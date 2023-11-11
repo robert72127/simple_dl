@@ -162,9 +162,8 @@ class BatchNorm1d(Module):
             var = ops.broadcast_to(var, x.shape)
 
             return self.weight * ((x-mean) / (var + self.eps)**(1/2) ) + self.bias
-        else:
 
-            return (x - self.momentum * self.running_mean) / (self.running_var  + self.eps)**(1/2)
+        return (x - self.momentum * self.running_mean) / (self.running_var  + self.eps)**(1/2)
 
 
 class LayerNorm1d(Module):

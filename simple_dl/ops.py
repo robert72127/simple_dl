@@ -1,7 +1,37 @@
 from numbers import Number
 from typing import Optional, List, Tuple, Union
-from .tensor import Tensor, State, TensorTuple, TensorOp, TensorTupleOp, Op
+from .tensor import Tensor, State, TensorTuple
 from . import ndarray
+
+class Op:
+    def __call__(self, *args):
+        raise NotImplementedError()
+
+    def compute(self, *args: Tuple[ndarray.array]):
+        """Calculate forward pass of operator."""
+        raise NotImplementedError()
+
+    def gradient( self, out_grad: "State", node: "State" ) -> Union["State", Tuple["State"]]:
+        """Compute partial adjoint for each input value for a given output adjoint."""
+        raise NotImplementedError()
+
+    def gradient_as_tuple(self, out_grad: "State", node: "State") -> Tuple["State"]:
+        """ Convenience method to always return a tuple from gradient call"""
+        output = self.gradient(out_grad, node)
+        if isinstance(output, tuple):
+            return output
+        elif isinstance(output, list):
+            return tuple(output)
+        else:
+            return (output,)
+
+class TensorOp(Op):
+    def __call__(self, *args):
+        return Tensor.make_from_op(self, args)
+
+class TensorTupleOp(Op):
+    def __call__(self, *args):
+        return TensorTuple.make_from_op(self, args)
 
 
 class MakeTensorTuple(TensorTupleOp):
@@ -123,7 +153,7 @@ class PowerScalar(TensorOp):
         self.scalar = scalar
 
     def compute(self, a: ndarray.array) -> ndarray:
-        return ndarray.array.power(a, self.scalar)        
+        return ndarray.power(a, self.scalar)        
 
     def gradient(self, out_grad, node):
         return  out_grad *   power_scalar(node.inputs[0], self.scalar-1) * self.scalar
@@ -137,7 +167,7 @@ class EWiseDiv(TensorOp):
     """Op to element-wise divide two nodes."""
 
     def compute(self, a, b):
-        return ndarray.array.divide(a, b)        
+        return ndarray.divide(a, b)        
 
     def gradient(self, out_grad, node):
         lhs, rhs = node.inputs
@@ -153,7 +183,7 @@ class DivScalar(TensorOp):
         self.scalar = scalar
 
     def compute(self, a):
-        return ndarray.array.divide(a, self.scalar)        
+        return ndarray.divide(a, self.scalar)
 
     def gradient(self, out_grad, node):
         return out_grad / self.scalar        
@@ -169,7 +199,7 @@ class Transpose(TensorOp):
 
     def compute(self, a):
         axis1, axis2 = self.axes if self.axes else [len(a.shape)-2, len(a.shape)-1]
-        return ndarray.array.swapaxes(a,axis1,axis2)        
+        return ndarray.swapaxes(a,axis1,axis2)        
 
     def gradient(self, out_grad, node):
         return transpose(out_grad, axes=self.axes)
@@ -184,7 +214,7 @@ class Reshape(TensorOp):
         self.shape = shape
 
     def compute(self, a):
-        return ndarray.array.reshape(a, newshape=self.shape)        
+        return ndarray.reshape(a, newshape=self.shape)        
 
     def gradient(self, out_grad, node):
         prev_shape = node.inputs[0].cached_data.shape
@@ -200,7 +230,7 @@ class BroadcastTo(TensorOp):
         self.shape = shape
 
     def compute(self, a):
-        return ndarray.array.broadcast_to(a, self.shape)
+        return ndarray.broadcast_to(a, self.shape)
 
     def gradient(self, out_grad, node):
     
@@ -225,7 +255,7 @@ class Summation(TensorOp):
         self.axes = axes
 
     def compute(self, a):
-        return ndarray.array.sum(a, axis=self.axes)        
+        return ndarray.sum(a, axis=self.axes)        
 
     def gradient(self, out_grad, node):
         original_shape = list(node.inputs[0].shape)
@@ -271,7 +301,7 @@ def negate(a):
 
 class Log(TensorOp):
     def compute(self, a):
-        return ndarray.array.log(a)        
+        return ndarray.log(a)        
 
     def gradient(self, out_grad, node):
         deriv = Tensor((1/node.inputs[0].cached_data))
@@ -282,8 +312,8 @@ def log(a):
 
 class Exp(TensorOp):
     def compute(self, a):
-        a = ndarray.array.clip(a, -709, 709)
-        return ndarray.array.exp(a)        
+        a = ndarray.clip(a, -709, 709)
+        return ndarray.exp(a)        
 
     def gradient(self, out_grad, node):
         return multiply(out_grad, exp(node.inputs[0]))        
@@ -312,14 +342,14 @@ class LogSumExp(TensorOp):
         self.axes = axes
 
     def compute(self, Z):
-        max_Z = ndarray.array.max(Z, axis=self.axes) 
+        max_Z = ndarray.max(Z, axis=self.axes) 
         if self.axes:
             new_shape = [Z.shape[i] if i not in self.axes else 1 for i in range(len(Z.shape))]
-            max_Z = ndarray.array.reshape(max_Z, new_shape)
+            max_Z = ndarray.reshape(max_Z, new_shape)
          
-        lse = ndarray.array.log(ndarray.sum( ndarray.exp(Z - max_Z), axis=self.axes ))
+        lse = ndarray.log(ndarray.sum( ndarray.exp(Z - max_Z), axis=self.axes ))
        
-        return lse + ndarray.array.reshape(max_Z, lse.shape)
+        return lse + ndarray.reshape(max_Z, lse.shape)
 
     def gradient(self, out_grad, node):
         exp_input = exp(node.inputs[0])

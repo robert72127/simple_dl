@@ -7,49 +7,8 @@ from collections import namedtuple
 LAZY_MODE = True
 TENSOR_COUNTER = 0
 
-class Op:
-    def __call__(self, *args):
-        raise NotImplementedError()
-
-    def compute(self, *args: Tuple[ndarray.array]):
-        """Calculate forward pass of operator."""
-
-        raise NotImplementedError()
-
-    def gradient( self, out_grad: "State", node: "State" ) -> Union["State", Tuple["State"]]:
-        """Compute partial adjoint for each input value for a given output adjoint."""
-        raise NotImplementedError()
-
-    def gradient_as_tuple(self, out_grad: "State", node: "State") -> Tuple["State"]:
-        """ Convenience method to always return a tuple from gradient call"""
-        output = self.gradient(out_grad, node)
-        if isinstance(output, tuple):
-            return output
-        elif isinstance(output, list):
-            return tuple(output)
-        else:
-            return (output,)
-
-class TensorOp(Op):
-    def __call__(self, *args):
-        return Tensor.make_from_op(self, args)
-
-
-class TensorTupleOp(Op):
-    def __call__(self, *args):
-        return TensorTuple.make_from_op(self, args)
-
-
 class State:
-    """A value in the computational graph. either scalar or tensor"""
-
-    # trace of computational graph
-    op: Optional[Op]    # from what op was it created
-    inputs: List["State"]   # parents
-    # The following fields are cached fields for
-    # dynamic computation
-    cached_data: ndarray.array #ok so this can be either computed, or we store reerence to inputs and lazily compute them with op
-    requires_grad: bool
+    """A value in the computational graph."""
 
     def realize_cached_data(self):
         """Run compute to realize the cached data"""
@@ -57,9 +16,7 @@ class State:
         if self.cached_data is not None:
             return self.cached_data
         # note: data implicitly calls realized cached data
-        self.cached_data = self.op.compute(
-            *[x.realize_cached_data() for x in self.inputs]
-        )
+        self.cached_data = self.op.compute(*[x.realize_cached_data() for x in self.inputs])
         self.cached_data
         return self.cached_data
 
@@ -70,35 +27,27 @@ class State:
         global TENSOR_COUNTER
         TENSOR_COUNTER -= 1
 
-    def _init(
-        self,
-        op: Optional[Op],
-        inputs: List["Tensor"],
-        *,
-        num_outputs: int = 1,
-        cached_data: List[object] = None,
-        requires_grad: Optional[bool] = None
-    ):
+    def __init__(self,op, inputs: List["Tensor"],*,num_outputs: int = 1,cached_data: List[object] = None,requires_grad: Optional[bool] = None):
         global TENSOR_COUNTER
         TENSOR_COUNTER += 1
         if requires_grad is None:
             requires_grad = any(x.requires_grad for x in inputs)
-        self.op = op
-        self.inputs = inputs
+        self.op = op    # from what op was it created
+        self.inputs = inputs # parent tensors
         self.num_outputs = num_outputs
-        self.cached_data = cached_data
+        self.cached_data = cached_data # we can just track computational graph and compute this only when needed
         self.requires_grad = requires_grad
 
     @classmethod
     def make_const(cls, data, *, requires_grad=False):
         value = cls.__new__(cls)
-        value._init(None,[],cached_data=data,requires_grad=requires_grad,)
+        value.__init__(None,[],cached_data=data,requires_grad=requires_grad,)
         return value
 
     @classmethod
-    def make_from_op(cls, op: Op, inputs: List["State"]):
+    def make_from_op(cls, op, inputs: List["State"]):
         value = cls.__new__(cls)
-        value._init(op, inputs)
+        value.__init__(op, inputs)
 
         if not LAZY_MODE:
             if not value.requires_grad:
@@ -123,12 +72,12 @@ class Tensor(State):
             dtype = dtype
             cached_data = ndarray.array(array)
 
-        self._init(None,[],cached_data=cached_data,requires_grad=requires_grad,)
+        super(Tensor, self).__init__(None,[],cached_data=cached_data,requires_grad=requires_grad,)
 
     @staticmethod
-    def make_from_op(op: Op, inputs: List["State"]):
+    def make_from_op(op, inputs: List["State"]):
         tensor = Tensor.__new__(Tensor)
-        tensor._init(op, inputs)
+        super(Tensor, tensor).__init__(op, inputs)
         if not LAZY_MODE:
             if not tensor.requires_grad:
                 return tensor.detach()
@@ -138,7 +87,7 @@ class Tensor(State):
     @staticmethod
     def make_const(data, requires_grad=False):
         tensor = Tensor.__new__(Tensor)
-        tensor._init(
+        super(Tensor, tensor).__init__(
             None,
             [],
             cached_data=data if not isinstance(data, Tensor) else data.realize_cached_data(),
